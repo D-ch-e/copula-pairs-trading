@@ -1,0 +1,33 @@
+# 主規格（pre-registered）：開始回測前固定，之後的變化只當敏感度分析
+
+db_path: data/pairs.sqlite
+
+data:
+  start: 2006-05-01
+  end: 2025-12-31
+  tickers: [GLD, SLV, GDX, GDXJ, XOM, CVX, KO, PEP, SPY]
+  french_daily_url: https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip
+
+pairs:
+  main: [GLD, SLV]
+  robustness:
+    - [GDX, GDXJ]
+    - [XOM, CVX]
+    - [KO, PEP]
+
+benchmarks: [SPY, GLD]
+
+strategy:
+  estimation_window_days: 252   # 12 個月
+  refit: monthly                # 每月重估 copula
+  alpha: 0.05                   # 條件機率信賴帶
+  exit_band: 0.5                # 條件機率回到 0.5 出場
+  max_holding_days: 20
+  stop_loss: -0.05
+  execution_lag_days: 1         # 一日等待
+
+costs:
+  round_trip_bps: 50
+  sensitivity_bps: [0, 10, 25, 50, 100]
+
+seed: 42
