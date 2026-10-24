@@ -1,14 +1,16 @@
 """Walk-forward backtest for one pair.
 
-Each month: fit Gaussian and t copulas on the previous `estimation_window_days`
-log returns, map that month's returns through the training ECDFs, and compute
-h1 = h(u1|u2), h2 = h(u2|u1) with the chosen family.
+Every month the model is refit on the previous `estimation_window_days` of data
+and applied to that month only. Two signal models share one trade simulator:
 
-Trading rules:
+- copula: fit Gaussian and t copulas on log returns, map the month's returns
+  through the training ECDFs, compute h1 = h(u1|u2), h2 = h(u2|u1)
+- zscore (baseline): OLS hedge ratio on log prices, spread z-score
+
+Trading rules (simulate):
 - signal at close t, order executed at close t + execution_lag_days
 - one open position at a time, $1 long / $1 short (returns are per $1 per leg)
-- exit when h1 and h2 are both back across exit_band, the trade return hits
-  take_profit or stop_loss, or the position is max_holding_days old
+- exit on reversion, take-profit, stop-loss or max_holding_days
 - round-trip cost charged half at entry, half at exit
 """
 import numpy as np
@@ -23,25 +25,66 @@ H_FUNCTIONS = {
 }
 
 
-def rolling_conditional_probs(
-    log_returns: pd.DataFrame, window: int, family: str
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Monthly refit; returns daily (u1, u2, h1, h2) and one row of fit stats per month."""
-    r = log_returns.dropna()
-    months = r.index.to_period("M")
-    daily, fits = [], []
+def _monthly_windows(index: pd.DatetimeIndex, window: int):
+    """Yield (month, train positions, test mask) for months with a full training window."""
+    months = index.to_period("M")
     for month in months.unique():
         in_month = months == month
         first = int(np.argmax(in_month))
-        if first < window:
-            continue
-        train, test = r.iloc[first - window:first], r[in_month]
+        if first >= window:
+            yield month, slice(first - window, first), in_month
+
+
+def paper_quantile_thresholds(
+    p1: np.ndarray, p2: np.ndarray, signal: np.ndarray, horizon: int, tp_q: float, sl_q: float
+) -> tuple[float, float, int]:
+    """Krauss & Stübinger (2015) exit levels from in-window cumulative return paths.
+
+    For every signal j whose full `horizon`-day path lies inside the window, the
+    path is CR_k = d * (p1[j+k]/p1[j] - p2[j+k]/p2[j]), k = 1..horizon.
+    TP = mean of the paths' tp_q quantiles, SL = mean of their sl_q quantiles.
+    """
+    tps, sls = [], []
+    for j in np.flatnonzero(signal[: len(signal) - horizon]):
+        k = np.arange(j + 1, j + horizon + 1)
+        path = signal[j] * (p1[k] / p1[j] - p2[k] / p2[j])
+        tps.append(np.quantile(path, tp_q))
+        sls.append(np.quantile(path, sl_q))
+    if not tps:
+        return np.nan, np.nan, 0
+    return float(np.mean(tps)), float(np.mean(sls)), len(tps)
+
+
+def copula_frame(prices: pd.DataFrame, s: dict, family: str, exit_rule: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Daily signal/exit frame for the copula strategy plus one row of fit stats per month."""
+    r = np.log(prices).diff().dropna()
+    px = prices.loc[r.index]
+    alpha, band = s["alpha"], s.get("exit_band")
+    frames, fits = [], []
+    for month, train_pos, in_month in _monthly_windows(r.index, s["estimation_window_days"]):
+        train, test = r.iloc[train_pos], r[in_month]
         tr1, tr2 = train.iloc[:, 0].to_numpy(), train.iloc[:, 1].to_numpy()
         p1, p2 = copula.pseudo_observations(tr1), copula.pseudo_observations(tr2)
         u1 = copula.ecdf_transform(tr1, test.iloc[:, 0].to_numpy())
         u2 = copula.ecdf_transform(tr2, test.iloc[:, 1].to_numpy())
 
         g, t = copula.fit_gaussian(p1, p2), copula.fit_t(p1, p2)
+        fit = g if family == "gaussian" else t
+        h = H_FUNCTIONS[family]
+        h1, h2 = h(u1, u2, fit), h(u2, u1, fit)
+
+        tp, sl = s.get("take_profit"), s["stop_loss"]
+        n_paths = None
+        if exit_rule == "paper_quantile":
+            q = s["paper_quantile"]
+            train_signal = classify_regions(pd.Series(h(p1, p2, fit)), pd.Series(h(p2, p1, fit)), alpha).to_numpy()
+            tp, sl, n_paths = paper_quantile_thresholds(
+                px.iloc[train_pos, 0].to_numpy(), px.iloc[train_pos, 1].to_numpy(), train_signal,
+                s["max_holding_days"], q["take_profit_quantile"], q["stop_loss_quantile"],
+            )
+            if n_paths == 0:
+                tp, sl = s.get("take_profit"), s["stop_loss"]
+
         fits.append({
             "month": str(month),
             "gaussian_rho": g["rho"], "gaussian_aic": g["aic"],
@@ -49,51 +92,82 @@ def rolling_conditional_probs(
             "t_tail_dep": copula.tail_dependence_t(t["rho"], t["nu"]),
             "gaussian_oos_loglik": copula.logpdf_gaussian(u1, u2, g["rho"]).sum(),
             "t_oos_loglik": copula.logpdf_t(u1, u2, t["rho"], t["nu"]).sum(),
+            "take_profit": tp, "stop_loss": sl, "threshold_paths": n_paths,
         })
 
-        fit = g if family == "gaussian" else t
-        h = H_FUNCTIONS[family]
-        daily.append(pd.DataFrame(
-            {"u1": u1, "u2": u2, "h1": h(u1, u2, fit), "h2": h(u2, u1, fit)}, index=test.index
-        ))
-    return pd.concat(daily), pd.DataFrame(fits)
+        use_band = exit_rule == "probability" and band is not None
+        frames.append(pd.DataFrame({
+            "u1": u1, "u2": u2, "h1": h1, "h2": h2,
+            "signal": classify_regions(pd.Series(h1), pd.Series(h2), alpha).to_numpy(),
+            "close_long": use_band & (h1 >= band) & (h2 <= band),
+            "close_short": use_band & (h1 <= band) & (h2 >= band),
+            "take_profit": np.nan if tp is None else tp,
+            "stop_loss": sl,
+        }, index=test.index))
+    return pd.concat(frames), pd.DataFrame(fits)
 
 
-def _exit_reason(pos, trade_ret, held, h1, h2, s) -> str | None:
-    if trade_ret <= s["stop_loss"]:
+def zscore_frame(prices: pd.DataFrame, s: dict, z_cfg: dict) -> pd.DataFrame:
+    """Baseline: spread = log p1 - beta * log p2 with beta, mean, std from the training window."""
+    logp = np.log(prices).iloc[1:]  # same trading days as the copula strategy
+    frames = []
+    for _, train_pos, in_month in _monthly_windows(logp.index, s["estimation_window_days"]):
+        train, test = logp.iloc[train_pos], logp[in_month]
+        beta, _ = np.polyfit(train.iloc[:, 1], train.iloc[:, 0], 1)
+        spread_train = train.iloc[:, 0] - beta * train.iloc[:, 1]
+        z = ((test.iloc[:, 0] - beta * test.iloc[:, 1]) - spread_train.mean()) / spread_train.std(ddof=1)
+        frames.append(pd.DataFrame({
+            "z": z, "beta": beta,
+            "signal": np.where(z < -z_cfg["entry"], 1, np.where(z > z_cfg["entry"], -1, 0)),
+            "close_long": z >= z_cfg["exit"],
+            "close_short": z <= z_cfg["exit"],
+            "take_profit": np.nan if s.get("take_profit") is None else s["take_profit"],
+            "stop_loss": s["stop_loss"],
+        }, index=test.index))
+    return pd.concat(frames)
+
+
+def _exit_reason(pos, trade_ret, held, closes, tp, sl, max_hold) -> str | None:
+    if trade_ret <= sl:
         return "stop_loss"
-    if s.get("take_profit") is not None and trade_ret >= s["take_profit"]:
+    if not np.isnan(tp) and trade_ret >= tp:
         return "take_profit"
-    band = s.get("exit_band")
-    if band is not None and pos * (h1 - band) >= 0 and pos * (h2 - band) <= 0:
+    if closes:
         return "reversion"
-    if held >= s["max_holding_days"]:
+    if held >= max_hold:
         return "max_holding"
     return None
 
 
-def simulate(prices: pd.DataFrame, probs: pd.DataFrame, s: dict, cost_bps: float) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Daily state machine over the trading days in `probs`."""
-    px = prices.loc[probs.index]
+def simulate(prices: pd.DataFrame, frame: pd.DataFrame, s: dict, cost_bps: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Daily state machine over the trading days in `frame`.
+
+    `frame` needs: signal (+1/-1/0), close_long, close_short (bool), take_profit, stop_loss.
+    Exit levels are fixed at the values of the entry day.
+    """
+    px = prices.loc[frame.index]
     p1, p2 = px.iloc[:, 0].to_numpy(), px.iloc[:, 1].to_numpy()
-    h1, h2 = probs["h1"].to_numpy(), probs["h2"].to_numpy()
-    signal = classify_regions(probs["h1"], probs["h2"], s["alpha"]).to_numpy()
-    lag, half_cost = s["execution_lag_days"], cost_bps / 1e4 / 2
-    dates = probs.index
+    signal = frame["signal"].to_numpy()
+    close_long, close_short = frame["close_long"].to_numpy(), frame["close_short"].to_numpy()
+    tps, sls = frame["take_profit"].to_numpy(dtype=float), frame["stop_loss"].to_numpy(dtype=float)
+    lag, half_cost, max_hold = s["execution_lag_days"], cost_bps / 1e4 / 2, s["max_holding_days"]
+    dates = frame.index
     n = len(dates)
 
     ret, held_pos = np.zeros(n), np.zeros(n, dtype=int)
     trades = []
-    pos, entry_idx, e1, e2, trade_val = 0, None, None, None, 0.0
+    pos, entry_idx, e1, e2, trade_val, tp, sl = 0, None, None, None, 0.0, np.nan, np.nan
     pending = None  # (exec_idx, action, direction, decided_idx, reason)
 
     def execute(i, order):
-        nonlocal pos, entry_idx, e1, e2, trade_val
+        nonlocal pos, entry_idx, e1, e2, trade_val, tp, sl
         _, action, direction, decided_idx, reason = order
         ret[i] -= half_cost
         if action == "enter":
             pos, entry_idx, e1, e2, trade_val = direction, i, p1[i], p2[i], 0.0
-            trades.append({"signal_date": dates[decided_idx], "entry_date": dates[i], "direction": direction})
+            tp, sl = tps[i], sls[i]
+            trades.append({"signal_date": dates[decided_idx], "entry_date": dates[i], "direction": direction,
+                           "take_profit": tp, "stop_loss": sl})
         else:
             trades[-1].update({
                 "exit_date": dates[i], "exit_reason": reason, "holding_days": i - entry_idx,
@@ -115,7 +189,8 @@ def simulate(prices: pd.DataFrame, probs: pd.DataFrame, s: dict, cost_bps: float
             if pos == 0 and signal[i] != 0:
                 pending = (i + lag, "enter", int(signal[i]), i, None)
             elif pos != 0:
-                reason = _exit_reason(pos, trade_val, i - entry_idx, h1[i], h2[i], s)
+                closes = close_long[i] if pos > 0 else close_short[i]
+                reason = _exit_reason(pos, trade_val, i - entry_idx, closes, tp, sl, max_hold)
                 if reason is not None:
                     pending = (i + lag, "exit", 0, i, reason)
             if pending is not None and pending[0] == i:
@@ -126,18 +201,28 @@ def simulate(prices: pd.DataFrame, probs: pd.DataFrame, s: dict, cost_bps: float
             execute(i, (i, "exit", 0, i, "end_of_data"))
         held_pos[i] = pos
 
-    daily = probs.assign(signal=signal, position=held_pos, ret=ret)
+    daily = frame.assign(position=held_pos, ret=ret)
     return daily, pd.DataFrame(trades)
 
 
 def run_backtest(
-    prices: pd.DataFrame, cfg: dict, family: str | None = None, cost_bps: float | None = None
+    prices: pd.DataFrame,
+    cfg: dict,
+    family: str | None = None,
+    cost_bps: float | None = None,
+    model: str = "copula",
+    exit_rule: str | None = None,
 ) -> dict:
-    """prices: two columns (leg 1, leg 2) of adjusted closes indexed by date."""
-    s = cfg["strategy"]
-    family = family or s["family"]
+    """prices: two columns (leg 1, leg 2) of adjusted closes indexed by date.
+
+    model: "copula" or "zscore". exit_rule (copula only): "probability" or "paper_quantile".
+    """
+    s = {**cfg["strategy"], "paper_quantile": cfg.get("paper_quantile")}
     cost_bps = cfg["costs"]["round_trip_bps"] if cost_bps is None else cost_bps
-    log_returns = np.log(prices).diff()
-    probs, fits = rolling_conditional_probs(log_returns, s["estimation_window_days"], family)
-    daily, trades = simulate(prices, probs, s, cost_bps)
+    fits = None
+    if model == "zscore":
+        frame = zscore_frame(prices, s, cfg["zscore"])
+    else:
+        frame, fits = copula_frame(prices, s, family or s["family"], exit_rule or s["exit_rule"])
+    daily, trades = simulate(prices, frame, s, cost_bps)
     return {"daily": daily, "trades": trades, "fits": fits}

@@ -26,6 +26,7 @@ source ~/.venvs/copula-pairs-trading/bin/activate
 pip install -r requirements.txt
 python -m scripts.init_db
 python -m scripts.download_data
+python -m scripts.run_experiments   # all specs x pairs x costs -> SQLite result tables
 pytest
 ```
 

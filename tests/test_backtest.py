@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cpt.backtest import run_backtest
+from cpt.backtest import paper_quantile_thresholds, run_backtest
 from cpt.config import load_config
 
 
@@ -24,16 +24,37 @@ def _synthetic_prices(n=500, seed=0) -> pd.DataFrame:
     return pd.DataFrame({"A": 100 * np.exp(np.cumsum(r1)), "B": 50 * np.exp(np.cumsum(r2))}, index=dates)
 
 
-def test_no_look_ahead(cfg):
+@pytest.mark.parametrize("kwargs", [
+    {},
+    {"exit_rule": "paper_quantile"},
+    {"model": "zscore"},
+])
+def test_no_look_ahead(cfg, kwargs):
     prices = _synthetic_prices()
     cutoff = prices.index[350]
     shocked = prices.copy()
     shocked.loc[shocked.index > cutoff] *= np.linspace(1.5, 0.5, (shocked.index > cutoff).sum())[:, None]
 
-    base = run_backtest(prices, cfg)["daily"]
-    alt = run_backtest(shocked, cfg)["daily"]
-    before = base.index <= cutoff
-    pd.testing.assert_frame_equal(base[before], alt[alt.index <= cutoff])
+    base = run_backtest(prices, cfg, **kwargs)["daily"]
+    alt = run_backtest(shocked, cfg, **kwargs)["daily"]
+    pd.testing.assert_frame_equal(base[base.index <= cutoff], alt[alt.index <= cutoff])
+
+
+def test_paper_quantile_thresholds_hand_example():
+    p1 = np.array([100, 101, 102, 103, 104.0])
+    p2 = np.array([100, 100, 100, 100, 100.0])
+    signal = np.array([1, 0, 0, 0, 0])
+    tp, sl, n = paper_quantile_thresholds(p1, p2, signal, horizon=2, tp_q=1.0, sl_q=0.0)
+    # only j=0 has a full 2-day path: CR = [0.01, 0.02]
+    assert n == 1
+    assert tp == pytest.approx(0.02) and sl == pytest.approx(0.01)
+
+
+def test_zscore_baseline_trades_and_reverts(cfg):
+    out = run_backtest(_synthetic_prices(seed=5), cfg, model="zscore")
+    assert len(out["trades"]) > 0
+    assert out["fits"] is None
+    assert out["daily"]["ret"].sum() == pytest.approx(out["trades"]["net_return"].sum())
 
 
 def test_costs_reduce_returns_by_cost_per_trade(cfg):
