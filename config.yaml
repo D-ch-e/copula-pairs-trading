@@ -45,4 +45,23 @@ costs:
   round_trip_bps: 50
   sensitivity_bps: [0, 10, 25, 50, 100]
 
+# 子期間（2026-10-26 在看子期間結果前登記；日期依外部事件定義，不依策略表現挑選）
+subperiods:
+  gfc_2008:
+    label: Global financial crisis
+    start: 2007-12-01             # NBER 衰退期 2007-12 → 2009-06
+    end: 2009-06-30
+  silver_2011:
+    label: Silver boom and bust
+    start: 2011-01-01             # 白銀 2011-04 創高後崩跌
+    end: 2011-12-31
+  covid_2020:
+    label: COVID shock
+    start: 2020-02-01
+    end: 2020-12-31
+  rates_2022:
+    label: Rate-hike cycle
+    start: 2022-01-01
+    end: 2022-12-31
+
 seed: 42

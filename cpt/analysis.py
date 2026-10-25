@@ -1,9 +1,11 @@
-"""Dependence analysis for RQ1 (nonlinear / tail dependence) and RQ2 (t vs Gaussian)."""
+"""Dependence analysis for RQ1 (nonlinear / tail dependence) and RQ2 (t vs Gaussian),
+and subperiod breakdowns for RQ5."""
 import numpy as np
 import pandas as pd
 from scipy import stats
 
 from cpt import copula
+from cpt.metrics import max_drawdown, sharpe_ratio
 
 
 def dependence_summary(log_returns: pd.DataFrame, q: float = 0.05) -> dict:
@@ -66,3 +68,41 @@ def fit_comparison(fits: pd.DataFrame) -> dict:
         "median_nu": fits["t_nu"].median(),
         "median_tail_dep": fits["t_tail_dep"].median(),
     }
+
+
+def period_masks(index: pd.DatetimeIndex, periods: dict) -> dict[str, np.ndarray]:
+    """Boolean mask per configured subperiod, plus "other" for days outside all of them."""
+    masks = {name: np.asarray((index >= pd.Timestamp(p["start"])) & (index <= pd.Timestamp(p["end"])))
+             for name, p in periods.items()}
+    masks["other"] = ~np.logical_or.reduce(list(masks.values()))
+    return masks
+
+
+def subperiod_performance(returns: pd.Series, periods: dict) -> pd.DataFrame:
+    """Total return (not annualized: periods are short), annualized Sharpe and max drawdown per period."""
+    rows = {}
+    for name, mask in period_masks(returns.index, periods).items():
+        r = returns[mask]
+        rows[name] = {
+            "days": len(r),
+            "total_return": (1 + r).prod() - 1 if len(r) else np.nan,
+            "sharpe": sharpe_ratio(r) if len(r) > 1 else np.nan,
+            "max_drawdown": max_drawdown(r) if len(r) else np.nan,
+        }
+    return pd.DataFrame(rows).T
+
+
+def subperiod_copula(fits: pd.DataFrame, periods: dict) -> pd.DataFrame:
+    """Median t-copula parameters over the months whose start falls in each period."""
+    months = pd.PeriodIndex(fits["month"], freq="M").to_timestamp()
+    rows = {}
+    for name, mask in period_masks(months, periods).items():
+        f = fits[mask]
+        rows[name] = {
+            "months": len(f),
+            "median_t_rho": f["t_rho"].median(),
+            "median_t_nu": f["t_nu"].median(),
+            "median_tail_dep": f["t_tail_dep"].median(),
+            "t_better_oos_share": (f["t_oos_loglik"] > f["gaussian_oos_loglik"]).mean() if len(f) else np.nan,
+        }
+    return pd.DataFrame(rows).T

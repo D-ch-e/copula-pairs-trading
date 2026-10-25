@@ -20,6 +20,9 @@ Full analysis, tables and figures: [`notebooks/analysis.ipynb`](notebooks/analys
   specification's mean return differs significantly from zero; after a 50 bps round-trip cost,
   11 of 12 copula runs are significantly negative (net Sharpe −0.41 to −1.82). A z-score spread
   baseline is roughly flat; buy-and-hold GLD returned about 10% a year.
+- **Losses are not a crisis effect.** The main copula spec loses in 18 of 19 pair × stress-period
+  cells (2007–09, 2011, 2020, 2022), but most of its loss accrues outside those periods. Tail
+  dependence peaks in the 2020 COVID shock in all four pairs.
 - **Why:** signals come from single-day returns, so 95% of main-spec trades close on the
   reversion rule after ~2 days; the average trade earns less than the cost of making it.
 - These results **do not replicate** the paper's positive returns; the study differs in assets,
@@ -59,7 +62,7 @@ jupyter lab notebooks/analysis.ipynb
 - `cpt/` — library: `copula`, `signals`, `backtest`, `metrics`, `analysis`, `inference`, `plots`, `data`, `db`
 - `scripts/` — `download_data`, `run_experiments`
 - `tests/` — unit tests, including look-ahead and cost-accounting checks
-- `notebooks/analysis.ipynb` — dependence analysis, results, significance, observations
+- `notebooks/analysis.ipynb` — dependence analysis, results, significance, subperiods, observations
 - `reports/figures/` — figures used in the notebook
 
 ## Limitations
