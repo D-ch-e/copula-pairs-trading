@@ -21,10 +21,25 @@ strategy:
   estimation_window_days: 252   # 12 個月
   refit: monthly                # 每月重估 copula
   alpha: 0.05                   # 條件機率信賴帶
-  exit_band: 0.5                # 條件機率回到 0.5 出場
+  family: t                     # t 或 gaussian
+  exit_band: 0.5                # h1、h2 都回到 0.5 另一側時出場；null 停用
+  take_profit: null             # 交易累積報酬達此值出場；null 停用（敏感度用）
   max_holding_days: 20
   stop_loss: -0.05
   execution_lag_days: 1         # 一日等待
+  exit_rule: probability        # probability（主規格）或 paper_quantile
+
+# 第二規格（2026-10-24 在看到其結果前登記）：Krauss & Stübinger 的出場規則
+# 每月在估計視窗內對每個訊號追蹤 max_holding_days 天的累積報酬路徑，
+# TP = 各路徑 95% 分位數平均，SL = 各路徑 10% 分位數平均；不使用 exit_band。
+paper_quantile:
+  take_profit_quantile: 0.95
+  stop_loss_quantile: 0.10
+
+# Baseline：z-score 價差策略（同視窗、同成本、同 $1/$1 部位）
+zscore:
+  entry: 2.0                    # |z| > 2 進場
+  exit: 0.0                     # z 穿越 0 出場
 
 costs:
   round_trip_bps: 50
