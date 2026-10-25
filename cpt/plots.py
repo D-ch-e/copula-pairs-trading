@@ -210,3 +210,20 @@ def holding_periods(trades: dict[str, pd.DataFrame], pair: str) -> plt.Figure:
     ax.legend(loc="upper right")
     fig.tight_layout()
     return fig
+
+
+def subperiod_returns(table: pd.DataFrame, labels: dict[str, str], title: str) -> plt.Figure:
+    """Fig 9: total return per subperiod, grouped bars; rows = period key, columns = series name."""
+    width = 0.8 / len(table.columns)
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    for k, name in enumerate(table.columns):
+        x = np.arange(len(table)) + (k - (len(table.columns) - 1) / 2) * width
+        ax.bar(x, table[name], width=width * 0.9, color=SPEC_COLORS[name], label=name)
+    ax.axhline(0, color=MUTED, linewidth=1)
+    ax.set_xticks(np.arange(len(table)), [labels.get(p, p) for p in table.index])
+    ax.grid(axis="x", visible=False)
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+    ax.set_title(title)
+    ax.legend(ncol=4, loc="upper left", bbox_to_anchor=(0, -0.1))
+    fig.tight_layout()
+    return fig
