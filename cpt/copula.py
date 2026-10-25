@@ -10,7 +10,7 @@ from scipy.special import gammaln
 
 RHO_BOUND = 0.999
 NU_MIN, NU_MAX = 2.01, 200.0
-NU_GRID = [2.5, 3, 4, 6, 8, 12, 20, 30, 50, 100]
+NU_GRID = [2.5, 3, 4, 6, 8, 12, 20, 30, 50, 100, 150, 200]
 
 
 def pseudo_observations(x: np.ndarray) -> np.ndarray:
@@ -61,20 +61,44 @@ def fit_gaussian(u1: np.ndarray, u2: np.ndarray) -> dict:
     return _summary(-res.fun, k=1, n=len(u1), rho=res.x)
 
 
-def fit_t(u1: np.ndarray, u2: np.ndarray) -> dict:
-    """Joint MLE of (rho, nu), started from the Kendall's tau inversion and a nu grid."""
+def bound_flags(rho: float, nu: float, tol: float = 1e-3) -> dict:
+    """Whether a t-copula estimate sits on the edge of the parameter space.
+
+    nu at NU_MAX means the data cannot be told apart from a Gaussian copula;
+    nu at NU_MIN or |rho| at RHO_BOUND usually means the fit is unreliable.
+    """
+    return {
+        "nu_at_bound": bool(abs(nu - NU_MIN) < tol or abs(nu - NU_MAX) < tol * NU_MAX),
+        "rho_at_bound": bool(abs(rho) > RHO_BOUND - tol),
+    }
+
+
+def fit_t(u1: np.ndarray, u2: np.ndarray, n_starts: int = 3) -> dict:
+    """Joint MLE of (rho, nu) with optimizer diagnostics.
+
+    nu is optimized on a log scale because the likelihood is nearly flat in nu for
+    large values. Starts: the Kendall's tau inversion for rho and the `n_starts`
+    best points of a nu profile grid; the best converged run is kept (the best
+    run overall if none converged).
+    """
     tau = stats.kendalltau(u1, u2)[0]
     rho0 = np.clip(np.sin(np.pi * tau / 2), -0.95, 0.95)
-    nu0 = max(NU_GRID, key=lambda nu: logpdf_t(u1, u2, rho0, nu).sum())
+    profile = sorted(NU_GRID, key=lambda nu: -logpdf_t(u1, u2, rho0, nu).sum())
 
-    res = optimize.minimize(
-        lambda p: -logpdf_t(u1, u2, p[0], p[1]).sum(),
-        x0=[rho0, nu0],
-        bounds=[(-RHO_BOUND, RHO_BOUND), (NU_MIN, NU_MAX)],
-        method="L-BFGS-B",
-    )
-    rho, nu = res.x
-    return _summary(-res.fun, k=2, n=len(u1), rho=rho, nu=nu)
+    runs = []
+    for nu0 in profile[:n_starts]:
+        res = optimize.minimize(
+            lambda p: -logpdf_t(u1, u2, p[0], np.exp(p[1])).sum(),
+            x0=[rho0, np.log(nu0)],
+            bounds=[(-RHO_BOUND, RHO_BOUND), (np.log(NU_MIN), np.log(NU_MAX))],
+            method="L-BFGS-B",
+        )
+        runs.append(res)
+    converged = [r for r in runs if r.success]
+    best = min(converged or runs, key=lambda r: r.fun)
+    rho, nu = best.x[0], float(np.exp(best.x[1]))
+    return _summary(-best.fun, k=2, n=len(u1), rho=rho, nu=nu,
+                    converged=bool(best.success), n_converged=len(converged), **bound_flags(rho, nu))
 
 
 def h_gaussian(u: np.ndarray, v: np.ndarray, rho: float) -> np.ndarray:

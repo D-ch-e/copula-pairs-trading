@@ -37,8 +37,10 @@ def sortino_ratio(returns: pd.Series, rf: pd.Series | None = None) -> float:
 
 
 def drawdown(returns: pd.Series) -> pd.Series:
+    """Drawdown from the running peak, counting the starting NAV of 1.0 as the first peak."""
     wealth = (1 + returns).cumprod()
-    return wealth / wealth.cummax() - 1
+    peak = np.maximum(wealth.cummax(), 1.0)
+    return wealth / peak - 1
 
 
 def max_drawdown(returns: pd.Series) -> float:

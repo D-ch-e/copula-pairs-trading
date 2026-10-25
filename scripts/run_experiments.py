@@ -13,8 +13,9 @@ from cpt.config import db_path, load_config
 from cpt.db import connect, init_db, load_adj_close, upsert
 from cpt.metrics import performance_summary
 
+RESULT_TABLES = ["experiment_runs", "run_metrics", "strategy_returns", "trades", "copula_fits"]
 FIT_COLUMNS = ["gaussian_rho", "gaussian_aic", "t_rho", "t_nu", "t_aic", "t_tail_dep",
-               "gaussian_oos_loglik", "t_oos_loglik"]
+               "gaussian_oos_loglik", "t_oos_loglik", "t_converged", "t_nu_at_bound", "t_rho_at_bound"]
 
 
 def _replace_run(conn, run: dict, daily: pd.Series, position: pd.Series | None,
@@ -29,8 +30,8 @@ def _replace_run(conn, run: dict, daily: pd.Series, position: pd.Series | None,
             "n_trades": len(trades),
             "avg_holding_days": trades["holding_days"].mean(),
             "win_rate": (trades["net_return"] > 0).mean(),
-            # cost at which the average trade's net return is zero
-            "breakeven_bps": trades["gross_return"].mean() * 1e4,
+            # round-trip cost (quoted per pair at $1 per leg) at which the average trade nets zero
+            "breakeven_bps": (trades["gross_return"] / trades["leg_notional"]).mean() * 1e4,
         })
 
     upsert(conn, "experiment_runs", pd.DataFrame([{
@@ -55,7 +56,10 @@ def main() -> None:
     pairs = [cfg["pairs"]["main"], *cfg["pairs"]["robustness"]]
 
     with connect(db_path(cfg)) as conn:
+        for table in RESULT_TABLES:  # derived data: rebuilt from the current schema on every run
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
         init_db(conn)
+        gross, gross_cmp = cfg["capital"]["gross_exposure"], cfg["capital"]["comparison_gross_exposure"]
         rf = pd.read_sql("SELECT date, rf_daily FROM risk_free", conn,
                          parse_dates=["date"]).set_index("date")["rf_daily"]
 
@@ -72,9 +76,19 @@ def main() -> None:
 
             for (model, family, exit_rule), frame in specs.items():
                 for cost in costs:
-                    daily, trades = simulate(prices, frame, s, cost)
+                    daily, trades = simulate(prices, frame, s, cost, gross)
                     run = {"run_id": f"{pair}|{model}|{family}|{exit_rule}|{cost}", "pair": pair,
-                           "model": model, "family": family, "exit_rule": exit_rule, "cost_bps": cost}
+                           "model": model, "family": family, "exit_rule": exit_rule, "cost_bps": cost,
+                           "gross_exposure": gross}
+                    _replace_run(conn, run, daily["ret"], daily["position"], trades, rf)
+
+            if [leg1, leg2] == cfg["pairs"]["main"]:
+                frame = specs[("copula", s["family"], s["exit_rule"])]
+                for cost in costs:
+                    daily, trades = simulate(prices, frame, s, cost, gross_cmp)
+                    run = {"run_id": f"{pair}|copula|{s['family']}|{s['exit_rule']}|{cost}|gross{gross_cmp:g}",
+                           "pair": pair, "model": "copula", "family": s["family"], "exit_rule": s["exit_rule"],
+                           "cost_bps": cost, "gross_exposure": gross_cmp}
                     _replace_run(conn, run, daily["ret"], daily["position"], trades, rf)
             print(f"{pair}: {len(specs) * len(costs)} runs, "
                   f"{frame.index.min().date()} -> {frame.index.max().date()}")
@@ -87,7 +101,8 @@ def main() -> None:
                 series[f"50/50 {leg1}+{leg2}"] = 0.5 * bench[leg1] + 0.5 * bench[leg2]
                 for name, r in series.items():
                     run = {"run_id": f"{pair}|buy_hold|{name}", "pair": pair, "model": "buy_hold",
-                           "family": name, "exit_rule": None, "cost_bps": 0}
+                           "family": name, "exit_rule": None, "cost_bps": 0,
+                           "gross_exposure": 1.0}
                     _replace_run(conn, run, r, None, pd.DataFrame(), rf)
         conn.commit()
 

@@ -111,7 +111,7 @@ def rolling_parameters(fits: pd.DataFrame, pair: str) -> plt.Figure:
     axes[0].legend(loc="lower left")
     axes[1].plot(x, fits["t_nu"], color=SERIES[0])
     axes[1].set_yscale("log")
-    axes[1].set_title("t-copula ν (log scale; small ν = fatter joint tails, ν ≈ 100 = indistinguishable from Gaussian)")
+    axes[1].set_title("t-copula ν (log scale; small ν = fatter joint tails, ν = 200 is the upper bound ≈ Gaussian)")
     axes[2].plot(x, fits["t_tail_dep"], color=SERIES[0])
     axes[2].yaxis.set_major_formatter(PercentFormatter(1.0))
     axes[2].set_title("Implied tail dependence λ of the t-copula (Gaussian λ = 0)")
@@ -119,8 +119,10 @@ def rolling_parameters(fits: pd.DataFrame, pair: str) -> plt.Figure:
     return fig
 
 
-def tail_calibration(table: pd.DataFrame, q: float) -> plt.Figure:
-    """Fig 4: observed vs predicted out-of-sample joint-tail days, as % of days, per pair."""
+def tail_calibration(table: pd.DataFrame, q: float, title: str) -> plt.Figure:
+    """Fig 4: observed vs predicted joint-tail share of out-of-sample days, per pair.
+
+    `table` holds shares (0-1) per pair in the four columns below."""
     cols = [("observed_lower", "Observed, lower tail", SERIES[0]),
             ("observed_upper", "Observed, upper tail", SERIES[2]),
             ("pred_gaussian", "Predicted, Gaussian", SERIES[1]),
@@ -130,12 +132,12 @@ def tail_calibration(table: pd.DataFrame, q: float) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(10, 4.5))
     for k, (col, label, color) in enumerate(cols):
         x = np.arange(len(pairs)) + (k - 1.5) * width
-        ax.bar(x, table[col] / table["days"], width=width * 0.9, color=color, label=label)
+        ax.bar(x, table[col], width=width * 0.9, color=color, label=label)
     ax.axhline(q**2, color=MUTED, linewidth=1, linestyle="--", label=f"Independence ({q**2:.2%})")
     ax.set_xticks(np.arange(len(pairs)), pairs)
     ax.grid(axis="x", visible=False)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.set_title(f"Out-of-sample share of days with both legs beyond their {q:.0%} quantile")
+    ax.set_title(title)
     ax.legend(ncol=3, loc="upper left", bbox_to_anchor=(0, -0.08))
     fig.tight_layout()
     return fig

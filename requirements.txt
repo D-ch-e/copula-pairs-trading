@@ -1,10 +1,11 @@
-numpy
-pandas
-scipy
-statsmodels
-matplotlib
-yfinance
-pyyaml
-requests
-pytest
-jupyterlab
+# Supported ranges; exact versions behind the published results are in requirements-lock.txt
+numpy>=2.5.4,<3
+pandas>=3.0.6,<4
+scipy>=1.18.1,<2
+statsmodels>=0.15.0,<0.16
+matplotlib>=3.11.2,<4
+yfinance>=1.7.0,<2
+pyyaml>=6.0.3,<7
+requests>=2.34.2,<3
+pytest>=9.1.1,<10
+jupyterlab>=4.6.4,<5

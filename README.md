@@ -13,9 +13,11 @@ with three robustness pairs (GDX/GDXJ, XOM/CVX, KO/PEP).
 Full analysis, tables and figures: [`notebooks/analysis.ipynb`](notebooks/analysis.ipynb).
 
 - **Tail dependence is real.** Both legs land in their own 5% tail on 2.2–3.8% of days,
-  vs 0.25% under independence; joint crashes are more frequent than joint rallies.
+  vs 0.25% under independence. Evidence that joint crashes outnumber joint rallies is weak
+  (three of four pairs in sample, two of four out of sample).
 - **The t-copula fits better than the Gaussian copula**, out of sample, in all four pairs
-  (monthly out-of-sample log-likelihood gain, Newey-West p ≤ 0.03).
+  (monthly out-of-sample log-likelihood gain, Newey-West p ≤ 0.03). Its advantage in predicting
+  how often both legs crash together is not consistent once marginal drift is removed.
 - **The better fit does not make the strategy profitable.** Before costs no copula
   specification's mean return differs significantly from zero; after a 50 bps round-trip cost,
   11 of 12 copula runs are significantly negative (net Sharpe −0.41 to −1.82). A z-score spread
@@ -25,10 +27,12 @@ Full analysis, tables and figures: [`notebooks/analysis.ipynb`](notebooks/analys
   dependence peaks in the 2020 COVID shock in all four pairs.
 - **Why:** signals come from single-day returns, so 95% of main-spec trades close on the
   reversion rule after ~2 days; the average trade earns less than the cost of making it.
+- Strategy returns are on $1 of NAV at 200% gross exposure ($1 long + $1 short, the paper's
+  convention); a 100% version roughly halves returns and drawdowns without changing conclusions.
 - These results **do not replicate** the paper's positive returns; the study differs in assets,
   period (mostly post-publication) and pair selection, and none of those explanations is tested here.
 
-![Growth of $1](reports/figures/05_equity_and_drawdown.png)
+![Growth of $1 NAV](reports/figures/05_equity_and_drawdown.png)
 
 ## Paper vs. this project
 
@@ -47,9 +51,10 @@ to the cloud when disk space is low, which makes Python and SQLite hang.
 ```bash
 python3.12 -m venv ~/.venvs/copula-pairs-trading
 source ~/.venvs/copula-pairs-trading/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-lock.txt   # exact versions behind the results (ranges: requirements.txt)
 python -m scripts.init_db
-python -m scripts.download_data
+python -m scripts.download_data       # also compares the download with data/manifest.json
+python -m scripts.verify_data         # re-check the local database against the manifest
 python -m scripts.run_experiments   # all specs x pairs x costs -> SQLite result tables
 pytest
 jupyter lab notebooks/analysis.ipynb
@@ -59,9 +64,10 @@ jupyter lab notebooks/analysis.ipynb
 
 - `config.yaml` — all parameters; main and second specification registered before results
 - `sql/schema.sql` — SQLite schema (prices, risk-free rate, runs, metrics, returns, trades, copula fits)
-- `cpt/` — library: `copula`, `signals`, `backtest`, `metrics`, `analysis`, `inference`, `plots`, `data`, `db`
-- `scripts/` — `download_data`, `run_experiments`
-- `tests/` — unit tests, including look-ahead and cost-accounting checks
+- `cpt/` — library: `copula`, `signals`, `backtest`, `metrics`, `analysis`, `inference`, `plots`, `data`, `db`, `manifest`
+- `scripts/` — `download_data`, `verify_data`, `run_experiments`
+- `data/manifest.json` — row counts, date ranges and checksums of the data behind the results (prices are not committed)
+- `tests/` — unit tests, including look-ahead, cost-accounting, exposure, drawdown, optimizer and manifest checks
 - `notebooks/analysis.ipynb` — dependence analysis, results, significance, subperiods, observations
 - `reports/figures/` — figures used in the notebook
 
@@ -69,6 +75,8 @@ jupyter lab notebooks/analysis.ipynb
 
 - One price path per pair and four pairs chosen ex ante; p-values not adjusted for multiple testing.
 - Close-to-close execution, no slippage model; short-selling assumed available with no borrow fee.
-- The paper's quantile exit occasionally yields a stop-loss ≥ 0 or take-profit ≤ 0 (25 of 635
+- Out-of-sample margins drift (tail shares above 5%); the drift-corrected tail check is a diagnostic only.
+- The paper's quantile exit occasionally yields a stop-loss ≥ 0 or take-profit ≤ 0 (25 of 637
   trades); kept as specified rather than patched after seeing results.
-- Free data: yfinance adjusted prices can be revised; download timestamps are stored.
+- t-copula ν is bounded to [2.01, 200]; 74 of 850 monthly fits sit on a bound (results shown with and without them).
+- Free data: yfinance adjusted prices can be revised; `scripts/verify_data` reports any difference from the manifest.

@@ -84,3 +84,17 @@ def test_gaussian_family_runs(cfg):
     c = copy.deepcopy(cfg)
     out = run_backtest(_synthetic_prices(seed=4), c, family="gaussian")
     assert {"t_aic", "gaussian_aic", "t_oos_loglik"} <= set(out["fits"].columns)
+
+
+def test_gross_exposure_scales_returns_and_costs(cfg):
+    prices = _synthetic_prices(seed=6)
+    full = run_backtest(prices, cfg, gross_exposure=2.0)
+    half = run_backtest(prices, cfg, gross_exposure=1.0)
+    # same trades: exit thresholds are per $1 of leg notional
+    pd.testing.assert_series_equal(full["trades"]["exit_date"], half["trades"]["exit_date"])
+    np.testing.assert_allclose(half["daily"]["ret"], full["daily"]["ret"] / 2, atol=1e-12)
+
+    gross = run_backtest(prices, cfg, gross_exposure=1.0, cost_bps=0)
+    n_trades = len(half["trades"])
+    diff = gross["daily"]["ret"].sum() - half["daily"]["ret"].sum()
+    assert diff == pytest.approx(n_trades * 50 / 1e4 * 0.5)

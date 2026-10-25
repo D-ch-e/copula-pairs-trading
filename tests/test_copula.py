@@ -44,6 +44,22 @@ def test_fit_t_recovers_known_parameters():
     fit = copula.fit_t(copula.pseudo_observations(u1), copula.pseudo_observations(u2))
     assert fit["rho"] == pytest.approx(0.7, abs=0.03)
     assert fit["nu"] == pytest.approx(4, abs=1.5)
+    assert fit["converged"] and not fit["nu_at_bound"] and not fit["rho_at_bound"]
+
+
+def test_fit_t_on_gaussian_data_goes_to_upper_nu():
+    rng = np.random.default_rng(6)
+    z = rng.multivariate_normal([0, 0], [[1, 0.5], [0.5, 1]], size=3000)
+    fit = copula.fit_t(copula.pseudo_observations(z[:, 0]), copula.pseudo_observations(z[:, 1]))
+    assert fit["converged"]
+    assert fit["nu"] > 30  # no tail dependence: nu drifts toward the Gaussian limit
+
+
+def test_bound_flags():
+    assert copula.bound_flags(0.5, copula.NU_MAX)["nu_at_bound"]
+    assert copula.bound_flags(0.5, copula.NU_MIN)["nu_at_bound"]
+    assert not copula.bound_flags(0.5, 8.0)["nu_at_bound"]
+    assert copula.bound_flags(0.9995, 8.0)["rho_at_bound"]
 
 
 def test_t_beats_gaussian_on_t_data():
