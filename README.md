@@ -34,6 +34,18 @@ Full analysis, tables and figures: [`notebooks/analysis.ipynb`](notebooks/analys
 
 ![Growth of $1 NAV](reports/figures/05_equity_and_drawdown.png)
 
+## Dashboard
+
+An interactive Streamlit dashboard reads every number from `data/pairs.sqlite`: headline results,
+equity curves and drawdowns by pair, cost and exposure, copula fits and tail diagnostics, stress
+periods, and trade-level detail.
+
+```bash
+streamlit run dashboard/app.py
+```
+
+Run `scripts.download_data` and `scripts.run_experiments` first (see Setup).
+
 ## Paper vs. this project
 
 | Paper (cited) | My implementation | My extension |
@@ -68,6 +80,7 @@ jupyter lab notebooks/analysis.ipynb
 - `scripts/` — `download_data`, `verify_data`, `run_experiments`
 - `data/manifest.json` — row counts, date ranges and checksums of the data behind the results (prices are not committed)
 - `tests/` — unit tests, including look-ahead, cost-accounting, exposure, drawdown, optimizer and manifest checks
+- `dashboard/app.py` — Streamlit dashboard (data access in `cpt/dashboard_data.py`)
 - `notebooks/analysis.ipynb` — dependence analysis, results, significance, subperiods, observations
 - `reports/figures/` — figures used in the notebook
 

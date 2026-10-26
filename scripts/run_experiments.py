@@ -13,7 +13,7 @@ from cpt.config import db_path, load_config
 from cpt.db import connect, init_db, load_adj_close, upsert
 from cpt.metrics import performance_summary
 
-RESULT_TABLES = ["experiment_runs", "run_metrics", "strategy_returns", "trades", "copula_fits"]
+RESULT_TABLES = ["experiment_runs", "run_metrics", "strategy_returns", "trades", "copula_fits", "copula_daily"]
 FIT_COLUMNS = ["gaussian_rho", "gaussian_aic", "t_rho", "t_nu", "t_aic", "t_tail_dep",
                "gaussian_oos_loglik", "t_oos_loglik", "t_converged", "t_nu_at_bound", "t_rho_at_bound"]
 
@@ -70,8 +70,11 @@ def main() -> None:
             for family, exit_rule in [("t", "probability"), ("gaussian", "probability"), ("t", "paper_quantile")]:
                 frame, fits = copula_frame(prices, s, family, exit_rule)
                 specs[("copula", family, exit_rule)] = frame
-                if (family, exit_rule) == ("t", "probability"):
+                if (family, exit_rule) == (s["family"], s["exit_rule"]):
                     upsert(conn, "copula_fits", fits[["month", *FIT_COLUMNS]].assign(pair=pair))
+                    daily_out = frame[["u1", "u2", "h1", "h2", "signal"]].assign(
+                        pair=pair, date=frame.index.strftime("%Y-%m-%d"))
+                    upsert(conn, "copula_daily", daily_out)
             specs[("zscore", None, None)] = zscore_frame(prices, s, cfg["zscore"])
 
             for (model, family, exit_rule), frame in specs.items():
