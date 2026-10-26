@@ -76,3 +76,15 @@ CREATE TABLE IF NOT EXISTS copula_fits (
     t_rho_at_bound      INTEGER,   -- |rho| at 0.999
     PRIMARY KEY (pair, month)
 );
+
+-- Daily output of the main-spec copula model (for the dashboard's tail diagnostics)
+CREATE TABLE IF NOT EXISTS copula_daily (
+    pair   TEXT NOT NULL,
+    date   TEXT NOT NULL,
+    u1     REAL,              -- leg 1 return through the training-window ECDF
+    u2     REAL,
+    h1     REAL,              -- h(u1 | u2)
+    h2     REAL,              -- h(u2 | u1)
+    signal INTEGER,
+    PRIMARY KEY (pair, date)
+);

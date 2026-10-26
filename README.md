@@ -34,6 +34,15 @@ Full analysis, tables and figures: [`notebooks/analysis.ipynb`](notebooks/analys
 
 ![Growth of $1 NAV](reports/figures/05_equity_and_drawdown.png)
 
+## Dashboard (Tableau Public)
+
+Link: *to be added after publishing.*
+
+`python -m scripts.export_tableau` writes Tableau-ready CSV files to `exports/tableau/` (field
+definitions in [`docs/tableau_data_dictionary.md`](docs/tableau_data_dictionary.md)); the
+dashboard is built in Tableau Public following [`docs/tableau_guide.md`](docs/tableau_guide.md).
+Buy-and-hold benchmarks are exported as monthly returns only, since Tableau Public data is public.
+
 ## Paper vs. this project
 
 | Paper (cited) | My implementation | My extension |
@@ -56,6 +65,7 @@ python -m scripts.init_db
 python -m scripts.download_data       # also compares the download with data/manifest.json
 python -m scripts.verify_data         # re-check the local database against the manifest
 python -m scripts.run_experiments   # all specs x pairs x costs -> SQLite result tables
+python -m scripts.export_tableau    # CSV files for the Tableau dashboard
 pytest
 jupyter lab notebooks/analysis.ipynb
 ```
@@ -68,6 +78,8 @@ jupyter lab notebooks/analysis.ipynb
 - `scripts/` — `download_data`, `verify_data`, `run_experiments`
 - `data/manifest.json` — row counts, date ranges and checksums of the data behind the results (prices are not committed)
 - `tests/` — unit tests, including look-ahead, cost-accounting, exposure, drawdown, optimizer and manifest checks
+- `scripts/export_tableau.py` — CSV export for the Tableau dashboard (loaders in `cpt/results.py`)
+- `docs/` — Tableau build guide and data dictionary
 - `notebooks/analysis.ipynb` — dependence analysis, results, significance, subperiods, observations
 - `reports/figures/` — figures used in the notebook
 
