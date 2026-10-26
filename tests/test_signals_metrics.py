@@ -18,6 +18,14 @@ def test_max_drawdown_hand_example():
     assert metrics.max_drawdown(r) == pytest.approx(0.10)
 
 
+def test_max_drawdown_counts_loss_on_first_day():
+    # starting NAV 1.0 is the first peak: 1.0 -> 0.9 is a 10% drawdown
+    r = pd.Series([-0.10, 0.0, 0.05])
+    assert metrics.max_drawdown(r) == pytest.approx(0.10)
+    assert metrics.drawdown(r).index.equals(r.index)
+    assert metrics.max_drawdown(pd.Series([0.01, 0.02])) == 0
+
+
 def test_historical_var_cvar():
     r = pd.Series(np.arange(-50, 50) / 1000)  # -0.050 .. 0.049
     var, cvar = metrics.historical_var_cvar(r, 0.95)

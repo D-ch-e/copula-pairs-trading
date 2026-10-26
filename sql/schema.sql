@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
     family     TEXT,              -- t, gaussian (copula only)
     exit_rule  TEXT,              -- probability, paper_quantile (copula only)
     cost_bps   REAL,
+    gross_exposure REAL,      -- long + short notional per $1 of NAV
     created_at TEXT NOT NULL
 );
 
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS trades (
     net_return   REAL,
     take_profit  REAL,
     stop_loss    REAL,
+    leg_notional REAL,
     PRIMARY KEY (run_id, trade_no)
 );
 
@@ -69,5 +71,8 @@ CREATE TABLE IF NOT EXISTS copula_fits (
     t_tail_dep          REAL,
     gaussian_oos_loglik REAL,
     t_oos_loglik        REAL,
+    t_converged         INTEGER,   -- optimizer reported success
+    t_nu_at_bound       INTEGER,   -- nu at 2.01 or 200
+    t_rho_at_bound      INTEGER,   -- |rho| at 0.999
     PRIMARY KEY (pair, month)
 );

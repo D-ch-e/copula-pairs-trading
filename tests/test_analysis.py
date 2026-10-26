@@ -54,3 +54,30 @@ def test_subperiod_copula_uses_month_start():
     out = analysis.subperiod_copula(fits, periods)
     assert out.loc["jan", "months"] == 1 and out.loc["jan", "median_t_nu"] == 4
     assert out.loc["other", "t_better_oos_share"] == 0
+
+
+def _drifted_probs(n=4000, seed=7):
+    """Out-of-sample u's whose margins are wider than the training ECDF assumed."""
+    from scipy import stats
+    u1, u2 = copula.sample_t(n, rho=0.6, nu=4, seed=seed)
+    # strictly monotone widening, as a volatility increase would: more mass in both tails
+    squash = lambda u: stats.norm.cdf(1.5 * stats.norm.ppf(u))
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    return pd.DataFrame({"u1": squash(u1), "u2": squash(u2)}, index=idx)
+
+
+def test_marginal_exceedance_detects_drift():
+    out = analysis.marginal_exceedance(_drifted_probs(), q=0.05)
+    assert all(v > 0.10 for v in out.values())  # far above the nominal 5%
+
+
+def test_recalibration_restores_uniform_margins():
+    probs = _drifted_probs()
+    months = probs.index.to_period("M").astype(str).unique()
+    fits = pd.DataFrame({"month": months, "gaussian_rho": 0.6, "t_rho": 0.6, "t_nu": 4.0})
+    out = analysis.recalibrated_tail_calibration(fits, probs, q=0.05)
+    raw = analysis.oos_tail_calibration(fits, probs, q=0.05)
+    raw_lower = raw["observed_lower"].sum() / raw["days"].sum()
+    # raw count is inflated by the wider margins; recalibrated count is close to the true t prediction
+    assert raw_lower > out["observed_lower"]
+    assert out["observed_lower"] == pytest.approx(out["pred_t"], rel=0.25)

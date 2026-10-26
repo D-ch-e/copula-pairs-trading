@@ -7,3 +7,4 @@ __pycache__/
 data/*.sqlite
 data/raw/
 *.pdf
+!data/manifest.json

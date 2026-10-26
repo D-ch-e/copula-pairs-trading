@@ -41,8 +41,14 @@ zscore:
   entry: 2.0                    # |z| > 2 進場
   exit: 0.0                     # z 穿越 0 出場
 
+# 資本規則：$1 NAV，每腿名目 = gross_exposure / 2
+# 2.0 = $1 多 + $1 空（paper / Gatev 2006 慣例）；1.0 = $0.5 多 + $0.5 空，曝險與 $1 買進持有相同
+capital:
+  gross_exposure: 2.0
+  comparison_gross_exposure: 1.0   # 主規格另跑一次作對照
+
 costs:
-  round_trip_bps: 50
+  round_trip_bps: 50              # 每腿 $1 名目時一組配對往返成本；實扣 NAV = 此值 × 每腿名目
   sensitivity_bps: [0, 10, 25, 50, 100]
 
 # 子期間（2026-10-26 在看子期間結果前登記；日期依外部事件定義，不依策略表現挑選）

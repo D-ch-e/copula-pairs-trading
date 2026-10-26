@@ -57,6 +57,38 @@ def oos_tail_calibration(fits: pd.DataFrame, probs: pd.DataFrame, q: float = 0.0
     return pd.DataFrame(rows)
 
 
+def marginal_exceedance(probs: pd.DataFrame, q: float = 0.05) -> dict:
+    """Share of out-of-sample days on which each leg alone is in its lower / upper q tail.
+
+    The training ECDF is only an estimate of next month's margins: if returns get more
+    volatile, more than q of days land in each tail. The copula's joint-tail prediction
+    C(q, q) assumes exactly q, so marginal drift alone moves the joint count.
+    """
+    return {
+        "u1_lower": np.mean(probs.u1 < q), "u1_upper": np.mean(probs.u1 > 1 - q),
+        "u2_lower": np.mean(probs.u2 < q), "u2_upper": np.mean(probs.u2 > 1 - q),
+    }
+
+
+def recalibrated_tail_calibration(fits: pd.DataFrame, probs: pd.DataFrame, q: float = 0.05) -> dict:
+    """Joint-tail frequency after removing marginal drift, vs the copulas' average prediction.
+
+    All out-of-sample u's are re-ranked per leg over the whole test sample, so each leg is
+    exactly uniform and the remaining joint-tail frequency reflects dependence only. This
+    uses the full test sample and is a diagnostic, never an input to trading.
+    """
+    v1, v2 = copula.pseudo_observations(probs.u1.to_numpy()), copula.pseudo_observations(probs.u2.to_numpy())
+    raw = oos_tail_calibration(fits, probs, q)
+    days = raw["days"].sum()
+    return {
+        "days": days,
+        "observed_lower": np.mean((v1 < q) & (v2 < q)),
+        "observed_upper": np.mean((v1 > 1 - q) & (v2 > 1 - q)),
+        "pred_gaussian": raw["pred_gaussian"].sum() / days,
+        "pred_t": raw["pred_t"].sum() / days,
+    }
+
+
 def fit_comparison(fits: pd.DataFrame) -> dict:
     """Share of months where t beats Gaussian, in sample (AIC) and out of sample (log-lik)."""
     oos_diff = fits["t_oos_loglik"] - fits["gaussian_oos_loglik"]

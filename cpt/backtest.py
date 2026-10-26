@@ -9,9 +9,12 @@ and applied to that month only. Two signal models share one trade simulator:
 
 Trading rules (simulate):
 - signal at close t, order executed at close t + execution_lag_days
-- one open position at a time, $1 long / $1 short (returns are per $1 per leg)
-- exit on reversion, take-profit, stop-loss or max_holding_days
-- round-trip cost charged half at entry, half at exit
+- one open position at a time; capital is $1 of NAV and each leg has notional
+  gross_exposure / 2 (default 2.0: $1 long / $1 short, the paper's convention)
+- exit on reversion, take-profit, stop-loss or max_holding_days; take-profit and
+  stop-loss are returns per $1 of leg notional, so exits do not depend on exposure
+- round-trip cost is quoted per pair at $1 per leg and scaled by leg notional,
+  charged half at entry, half at exit
 """
 import numpy as np
 import pandas as pd
@@ -90,6 +93,7 @@ def copula_frame(prices: pd.DataFrame, s: dict, family: str, exit_rule: str) -> 
             "gaussian_rho": g["rho"], "gaussian_aic": g["aic"],
             "t_rho": t["rho"], "t_nu": t["nu"], "t_aic": t["aic"],
             "t_tail_dep": copula.tail_dependence_t(t["rho"], t["nu"]),
+            "t_converged": t["converged"], "t_nu_at_bound": t["nu_at_bound"], "t_rho_at_bound": t["rho_at_bound"],
             "gaussian_oos_loglik": copula.logpdf_gaussian(u1, u2, g["rho"]).sum(),
             "t_oos_loglik": copula.logpdf_t(u1, u2, t["rho"], t["nu"]).sum(),
             "take_profit": tp, "stop_loss": sl, "threshold_paths": n_paths,
@@ -139,8 +143,9 @@ def _exit_reason(pos, trade_ret, held, closes, tp, sl, max_hold) -> str | None:
     return None
 
 
-def simulate(prices: pd.DataFrame, frame: pd.DataFrame, s: dict, cost_bps: float) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Daily state machine over the trading days in `frame`.
+def simulate(prices: pd.DataFrame, frame: pd.DataFrame, s: dict, cost_bps: float,
+             gross_exposure: float = 2.0) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Daily state machine over the trading days in `frame`; returns are on $1 of NAV.
 
     `frame` needs: signal (+1/-1/0), close_long, close_short (bool), take_profit, stop_loss.
     Exit levels are fixed at the values of the entry day.
@@ -150,7 +155,8 @@ def simulate(prices: pd.DataFrame, frame: pd.DataFrame, s: dict, cost_bps: float
     signal = frame["signal"].to_numpy()
     close_long, close_short = frame["close_long"].to_numpy(), frame["close_short"].to_numpy()
     tps, sls = frame["take_profit"].to_numpy(dtype=float), frame["stop_loss"].to_numpy(dtype=float)
-    lag, half_cost, max_hold = s["execution_lag_days"], cost_bps / 1e4 / 2, s["max_holding_days"]
+    leg = gross_exposure / 2
+    lag, half_cost, max_hold = s["execution_lag_days"], cost_bps / 1e4 / 2 * leg, s["max_holding_days"]
     dates = frame.index
     n = len(dates)
 
@@ -171,13 +177,13 @@ def simulate(prices: pd.DataFrame, frame: pd.DataFrame, s: dict, cost_bps: float
         else:
             trades[-1].update({
                 "exit_date": dates[i], "exit_reason": reason, "holding_days": i - entry_idx,
-                "gross_return": trade_val, "net_return": trade_val - 2 * half_cost,
+                "gross_return": trade_val, "net_return": trade_val - 2 * half_cost, "leg_notional": leg,
             })
             pos = 0
 
     for i in range(n):
         if pos != 0:
-            value = pos * (p1[i] / e1 - p2[i] / e2)
+            value = leg * pos * (p1[i] / e1 - p2[i] / e2)
             ret[i] += value - trade_val
             trade_val = value
 
@@ -190,7 +196,7 @@ def simulate(prices: pd.DataFrame, frame: pd.DataFrame, s: dict, cost_bps: float
                 pending = (i + lag, "enter", int(signal[i]), i, None)
             elif pos != 0:
                 closes = close_long[i] if pos > 0 else close_short[i]
-                reason = _exit_reason(pos, trade_val, i - entry_idx, closes, tp, sl, max_hold)
+                reason = _exit_reason(pos, trade_val / leg, i - entry_idx, closes, tp, sl, max_hold)
                 if reason is not None:
                     pending = (i + lag, "exit", 0, i, reason)
             if pending is not None and pending[0] == i:
@@ -212,6 +218,7 @@ def run_backtest(
     cost_bps: float | None = None,
     model: str = "copula",
     exit_rule: str | None = None,
+    gross_exposure: float | None = None,
 ) -> dict:
     """prices: two columns (leg 1, leg 2) of adjusted closes indexed by date.
 
@@ -219,10 +226,11 @@ def run_backtest(
     """
     s = {**cfg["strategy"], "paper_quantile": cfg.get("paper_quantile")}
     cost_bps = cfg["costs"]["round_trip_bps"] if cost_bps is None else cost_bps
+    gross_exposure = cfg["capital"]["gross_exposure"] if gross_exposure is None else gross_exposure
     fits = None
     if model == "zscore":
         frame = zscore_frame(prices, s, cfg["zscore"])
     else:
         frame, fits = copula_frame(prices, s, family or s["family"], exit_rule or s["exit_rule"])
-    daily, trades = simulate(prices, frame, s, cost_bps)
+    daily, trades = simulate(prices, frame, s, cost_bps, gross_exposure)
     return {"daily": daily, "trades": trades, "fits": fits}
